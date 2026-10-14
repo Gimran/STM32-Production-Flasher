@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 import time
 import threading
 import tkinter as tk
@@ -18,7 +19,8 @@ capturing_hotkey = False
 hotkey_binding = None
 
 CLI = "STM32_Programmer_CLI.exe"
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flash_gui_config.json")
+APP_DIR = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(APP_DIR, "flash_gui_config.json")
 
 RESET_MODES = {
     "Software (-rst)": "-rst",
@@ -74,14 +76,14 @@ def run_cli(args):
 def select_file():
     global hex_file_path
     file = filedialog.askopenfilename(
-        title="Выберите прошивку",
+        title="Select firmware",
         filetypes=[("HEX files", "*.hex"), ("All files", "*.*")]
     )
     if file:
         hex_file_path = os.path.normpath(file)
-        label_path.configure(text=f"Файл: {hex_file_path}", text_color=("black", "white"))
-        log_message(f"Выбран файл: {hex_file_path}")
-        set_status("ГОТОВ К ПРОШИВКЕ", "#808080")
+        label_path.configure(text=f"File: {hex_file_path}", text_color=("black", "white"))
+        log_message(f"Selected file: {hex_file_path}")
+        set_status("READY TO FLASH", "#808080")
 
 
 def get_poll_interval():
@@ -95,35 +97,35 @@ def get_poll_interval():
 
 def check_and_flash_logic():
     """ Логика фонового потока для авто-режима """
-    set_status("ПОИСК УСТРОЙСТВА...", "#4B0082")
+    set_status("SEARCHING FOR DEVICE...", "#4B0082")
     cmd_connect = ["-c", "port=SWD", "freq=8000"]
 
     try:
         result = run_cli(cmd_connect)
 
         if "Device ID" in result.stdout:
-            log_message("\n[Авто] Обнаружено устройство! Запуск прошивки...")
+            log_message("\n[Auto] Device detected! Flashing...")
             run_programmer_sync()
 
-            set_status("ОТКЛЮЧИТЕ ПЛАТУ", "#FF8C00")
-            log_message("[Авто] Ожидание отключения платы...")
+            set_status("DISCONNECT THE BOARD", "#FF8C00")
+            log_message("[Auto] Waiting for the board to be disconnected...")
 
             while auto_mode_active:
                 res_check = run_cli(cmd_connect)
                 if "Device ID" not in res_check.stdout:
-                    log_message("[Авто] Плата отключена. Готов к следующей.")
+                    log_message("[Auto] Board disconnected. Ready for the next one.")
                     break
                 time.sleep(get_poll_interval())
 
     except Exception as e:
-        log_message(f"[Авто] Ошибка опроса: {str(e)}")
+        log_message(f"[Auto] Polling error: {str(e)}")
 
 
 def auto_worker():
     """ Цикл опроса для авто-режима """
     while auto_mode_active:
         if not hex_file_path:
-            log_message("[Авто] Ошибка: файл не выбран. Авто-режим остановлен.")
+            log_message("[Auto] Error: no file selected. Auto mode stopped.")
             ui(stop_auto_from_worker)
             break
 
@@ -147,7 +149,7 @@ def toggle_auto_mode():
     global auto_mode_active
     if var_auto.get():
         if not hex_file_path:
-            messagebox.showwarning("Ошибка", "Сначала выберите .hex файл!")
+            messagebox.showwarning("Error", "Select a .hex file first!")
             var_auto.set(False)
             return
         auto_mode_active = True
@@ -156,8 +158,8 @@ def toggle_auto_mode():
     else:
         auto_mode_active = False
         set_controls_enabled(True)
-        set_status("ГОТОВ К ПРОШИВКЕ", "#808080")
-        log_message("[Авто] Авто-режим выключен.")
+        set_status("READY TO FLASH", "#808080")
+        log_message("[Auto] Auto mode off.")
 
 
 def run_programmer(event=None):
@@ -165,9 +167,9 @@ def run_programmer(event=None):
     if auto_mode_active or busy or capturing_hotkey:
         return
     if event is not None and isinstance(root.focus_get(), tk.Entry):
-        return  # клавиша внутри поля ввода — не запускаем прошивку
+        return  # key typed in an entry field - do not flash
     if not hex_file_path:
-        messagebox.showwarning("Ошибка", "Сначала выберите .hex файл!")
+        messagebox.showwarning("Error", "Select a .hex file first!")
         return
     threading.Thread(target=run_programmer_sync, daemon=True).start()
 
@@ -175,26 +177,26 @@ def run_programmer(event=None):
 def run_programmer_sync():
     global busy
     busy = True
-    set_status("ПРОШИВКА...", "#FFA500")
+    set_status("FLASHING...", "#FFA500")
     clear_log()
-    log_message(f"Запуск прошивки...\nПуть: {hex_file_path}")
+    log_message(f"Starting flash...\nPath: {hex_file_path}")
 
     try:
         result = run_cli(["-c", "port=SWD", "freq=8000", "-w", hex_file_path, "--start"])
 
         if result.returncode == 0 and "successfully" in result.stdout.lower():
-            set_status("ПРОШИВКА УСПЕШНА", "#00AA00")
-            log_message("--- УСПЕШНО ---")
+            set_status("FLASH OK", "#00AA00")
+            log_message("--- SUCCESS ---")
             log_message(result.stdout)
         else:
-            set_status("ОШИБКА ПРОШИВКИ", "#CC0000")
-            log_message("--- ОШИБКА ---")
+            set_status("FLASH FAILED", "#CC0000")
+            log_message("--- ERROR ---")
             log_message(result.stdout)
             if result.stderr:
                 log_message(result.stderr)
     except Exception as e:
-        set_status("КРИТИЧЕСКАЯ ОШИБКА", "#CC0000")
-        log_message(f"Ошибка выполнения: {str(e)}")
+        set_status("CRITICAL ERROR", "#CC0000")
+        log_message(f"Execution error: {str(e)}")
     finally:
         busy = False
 
@@ -223,27 +225,27 @@ def simple_op_sync(busy_text, ok_text, err_text, args):
             log_message(f"--- {ok_text} ---")
         else:
             set_status(err_text, "#CC0000")
-            log_message("--- ОШИБКА ---")
+            log_message("--- ERROR ---")
     except Exception as e:
-        set_status("КРИТИЧЕСКАЯ ОШИБКА", "#CC0000")
-        log_message(f"Ошибка выполнения: {str(e)}")
+        set_status("CRITICAL ERROR", "#CC0000")
+        log_message(f"Execution error: {str(e)}")
     finally:
         busy = False
 
 
 def reset_rdp():
-    start_simple_op("СБРОС RDP...", "RDP СБРОШЕН", "ОШИБКА СБРОСА RDP",
+    start_simple_op("RESETTING RDP...", "RDP RESET", "RDP RESET FAILED",
                     ["-c", "port=SWD", "-ob", "RDP=0xAA"])
 
 
 def erase_flash():
-    start_simple_op("ОЧИСТКА FLASH...", "FLASH ОЧИЩЕНА", "ОШИБКА ОЧИСТКИ FLASH",
+    start_simple_op("ERASING FLASH...", "FLASH ERASED", "FLASH ERASE FAILED",
                     ["-c", "port=SWD", "freq=8000", "-e", "all"])
 
 
 def reset_mcu():
     flag = RESET_MODES[combo_reset.get()]
-    start_simple_op("RESET...", "RESET ВЫПОЛНЕН", "ОШИБКА RESET",
+    start_simple_op("RESETTING...", "RESET DONE", "RESET FAILED",
                     ["-c", "port=SWD", "freq=8000", flag])
 
 
@@ -257,14 +259,14 @@ def apply_hotkey(keysym):
     hotkey_binding = new_binding
     config["hotkey"] = keysym
     save_config()
-    btn_hotkey.configure(text=f"Клавиша: {keysym}")
-    label_hint.configure(text=f"{keysym} — ручная прошивка (если авто-режим выключен)")
+    btn_hotkey.configure(text=f"Key: {keysym}")
+    label_hint.configure(text=f"{keysym} - manual flash (when auto mode is off)")
 
 
 def start_capture_hotkey():
     global capturing_hotkey
     capturing_hotkey = True
-    btn_hotkey.configure(text="Нажмите клавишу...")
+    btn_hotkey.configure(text="Press a key...")
     root.bind("<KeyPress>", finish_capture_hotkey)
 
 
@@ -280,7 +282,7 @@ def finish_capture_hotkey(event):
             return
         except tk.TclError:
             pass
-    btn_hotkey.configure(text=f"Клавиша: {config['hotkey']}")
+    btn_hotkey.configure(text=f"Key: {config['hotkey']}")
 
 
 def on_reset_mode_change(value):
@@ -297,15 +299,15 @@ root.geometry("720x720")
 frame_top = ctk.CTkFrame(root)
 frame_top.pack(padx=10, pady=(10, 4), fill="x")
 
-btn_select = ctk.CTkButton(frame_top, text="Обзор (.hex)", command=select_file, width=110)
+btn_select = ctk.CTkButton(frame_top, text="Browse (.hex)", command=select_file, width=110)
 btn_select.pack(side="left", padx=8, pady=8)
 
 var_auto = ctk.BooleanVar()
-chk_auto = ctk.CTkSwitch(frame_top, text="Авто-режим", variable=var_auto, command=toggle_auto_mode,
+chk_auto = ctk.CTkSwitch(frame_top, text="Auto mode", variable=var_auto, command=toggle_auto_mode,
                          font=ctk.CTkFont(weight="bold"))
 chk_auto.pack(side="left", padx=8)
 
-ctk.CTkLabel(frame_top, text="Опрос (сек):").pack(side="left", padx=(12, 4))
+ctk.CTkLabel(frame_top, text="Poll (sec):").pack(side="left", padx=(12, 4))
 entry_interval = ctk.CTkEntry(frame_top, width=60, justify="center")
 entry_interval.insert(0, "1.0")
 entry_interval.pack(side="left")
@@ -318,15 +320,15 @@ btn_hotkey.pack(side="right", padx=8)
 frame_actions = ctk.CTkFrame(root)
 frame_actions.pack(padx=10, pady=4, fill="x")
 
-btn_flash = ctk.CTkButton(frame_actions, text="Прошить", command=run_programmer, width=100,
+btn_flash = ctk.CTkButton(frame_actions, text="Flash", command=run_programmer, width=100,
                           fg_color="#2E8B57", hover_color="#236B43")
 btn_flash.pack(side="left", padx=8, pady=8)
 
-btn_erase = ctk.CTkButton(frame_actions, text="Очистить flash", command=erase_flash, width=110,
+btn_erase = ctk.CTkButton(frame_actions, text="Erase flash", command=erase_flash, width=110,
                           fg_color="#B36B00", hover_color="#8F5600")
 btn_erase.pack(side="left", padx=4)
 
-btn_rdp = ctk.CTkButton(frame_actions, text="Сброс RDP", command=reset_rdp, width=100,
+btn_rdp = ctk.CTkButton(frame_actions, text="Reset RDP", command=reset_rdp, width=100,
                         fg_color="#B33A3A", hover_color="#8F2E2E")
 btn_rdp.pack(side="left", padx=4)
 
@@ -339,13 +341,13 @@ btn_reset = ctk.CTkButton(frame_actions, text="Reset", command=reset_mcu, width=
 btn_reset.pack(side="right", padx=4)
 
 # Остальной интерфейс
-label_path = ctk.CTkLabel(root, text="Файл не выбран", text_color="#E04040", wraplength=660)
+label_path = ctk.CTkLabel(root, text="No file selected", text_color="#E04040", wraplength=660)
 label_path.pack(pady=5)
 
 label_hint = ctk.CTkLabel(root, text="", font=ctk.CTkFont(slant="italic"))
 label_hint.pack(pady=5)
 
-status_indicator = ctk.CTkLabel(root, text="ОЖИДАНИЕ ФАЙЛА", fg_color="#808080", text_color="white",
+status_indicator = ctk.CTkLabel(root, text="WAITING FOR FILE", fg_color="#808080", text_color="white",
                                 font=ctk.CTkFont(size=22, weight="bold"), height=70, corner_radius=8)
 status_indicator.pack(fill="x", padx=10, pady=5)
 
